@@ -1,6 +1,7 @@
 #include "debugmenu.hpp"
 #include <bedrocktools/Version.hpp>
 #include "modules/ModuleRegistry.hpp"
+#include "modules/player/timechanger.hpp"
 #include <bedrocktools/events/EventBus.hpp>
 #include <bedrocktools/sdk/Offsets.hpp>
 #include <bedrocktools/memory/Signatures.hpp>
@@ -124,6 +125,8 @@ static void s_levelDtorVtable0Hook(void* _this) {
         g_debugMod->m_worldName = "N/A";
         g_debugMod->m_level = nullptr;
         g_debugMod->m_entityCount = -1;
+        g_debugMod->m_worldTime = 0;
+        g_debugMod->m_worldTimeValid = false;
     }
     if (s_origLevelDtorVtable0) s_origLevelDtorVtable0(_this);
 }
@@ -195,9 +198,17 @@ void DebugMenuModule::updateData(float yaw, float pitch, const bedrocktools::sdk
             m_entityCount = (int)list.size();
         }
     }
+
+    if (m_level && m_timeChanger) {
+        m_worldTime = m_timeChanger->getRealTime(m_level);
+        m_worldTimeValid = true;
+    } else {
+        m_worldTimeValid = false;
+    }
 }
 
 void DebugMenuModule::onInit() {
+    m_timeChanger = static_cast<TimeChangerModule*>(ModuleRegistry::get().find("bedrocktools.Time Changer"));
     bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>([](auto& event) { s_debugTickCallback(event.player); });
 
     if (!s_getRuntimeActorList) {
@@ -231,11 +242,30 @@ void DebugMenuModule::onInit() {
 
 }
 
-void DebugMenuModule::onEnable()  { m_firstTick = true; }
-void DebugMenuModule::onDisable() { m_firstTick = true; }
+void DebugMenuModule::onEnable() {
+    m_firstTick = true;
+    m_frameTimeMs = 0.0f;
+    m_hasFrameTime = false;
+}
+
+void DebugMenuModule::onDisable() {
+    m_firstTick = true;
+    m_frameTimeMs = 0.0f;
+    m_hasFrameTime = false;
+}
 
 void DebugMenuModule::onFrame() {
     if (!enabled) return;
+
+    auto frameNow = std::chrono::steady_clock::now();
+    if (m_hasFrameTime) {
+        float frameMs = std::chrono::duration<float, std::milli>(frameNow - m_lastFrameTime).count();
+        if (frameMs > 0.0f && frameMs < 1000.0f) {
+            m_frameTimeMs = m_frameTimeMs <= 0.0f ? frameMs : (m_frameTimeMs * 0.85f) + (frameMs * 0.15f);
+        }
+    }
+    m_lastFrameTime = frameNow;
+    m_hasFrameTime = true;
 
     std::vector<PLModMenu_DrawCommand> cmds;
     std::list<std::string> stringStore;
@@ -451,6 +481,15 @@ void DebugMenuModule::onFrame() {
         addLeft(buf);
         snprintf(buf, sizeof(buf), "Biome: %s", m_biomeName.c_str());
         addLeft(buf);
+        if (m_worldTimeValid) {
+            int dayTicks = m_worldTime % 24000;
+            if (dayTicks < 0) dayTicks += 24000;
+            int totalMinutes = ((dayTicks + 6000) % 24000) * 1440 / 24000;
+            int worldHour = totalMinutes / 60;
+            int worldMinute = totalMinutes % 60;
+            snprintf(buf, sizeof(buf), "World Time: %02d:%02d (%d ticks)", worldHour, worldMinute, dayTicks);
+            addLeft(buf);
+        }
 
         
         addRight(m_cachedDeviceName);
@@ -460,6 +499,8 @@ void DebugMenuModule::onFrame() {
         addRight(buf);
         addRight("Display: {DISPLAY_SIZE}");
         addRight("Active Renderer: OpenGL ES");
+        snprintf(buf, sizeof(buf), "Frame Time: %.2f ms", m_frameTimeMs);
+        addRight(buf);
         addRight("");
 
         time_t t = time(nullptr);
