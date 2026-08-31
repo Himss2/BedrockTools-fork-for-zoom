@@ -53,6 +53,10 @@ inline constexpr std::size_t mActorManager = 0x470;
 inline constexpr std::size_t mHitResultWrapper = 456;
 }
 
+namespace GameMode {
+inline constexpr std::size_t mDestroyProgress = 0x24;
+}
+
 namespace HitResult {
 inline constexpr std::size_t mStartPos = 0;
 inline constexpr std::size_t mType = 24;

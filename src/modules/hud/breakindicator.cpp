@@ -1,9 +1,10 @@
 #include "breakindicator.hpp"
 #include "modules/ModuleRegistry.hpp"
-#include <bedrocktools/memory/Signatures.hpp>
-#include "core/memory/Hooks.hpp"
-#include <bedrocktools/sdk/Memory.hpp>
+#include <bedrocktools/events/EventBus.hpp>
+#include <bedrocktools/events/GameModeActionEvent.hpp>
+#include <bedrocktools/sdk/Offsets.hpp>
 #include <cmath>
+#include <cstdint>
 
 static void indicatorHSVtoRGB(float h, float s, float v, float& out_r, float& out_g, float& out_b) {
     if (s == 0.0f) { out_r = out_g = out_b = v; return; }
@@ -23,104 +24,73 @@ static void indicatorHSVtoRGB(float h, float s, float v, float& out_r, float& ou
     }
 }
 
-static float (*_getDestroyProgress_orig)(void* _this, void* block);
-static BreakIndicatorModule* g_breakIndicatorMod = nullptr;
-
-static float _getDestroyProgress_hook(void* _this, void* block) {
-    float increment = 0.0f;
-    if (_getDestroyProgress_orig) {
-        increment = _getDestroyProgress_orig(_this, block);
-    }
-    
-    if (g_breakIndicatorMod && g_breakIndicatorMod->enabled) {
-        auto now = std::chrono::steady_clock::now();
-        
-        if (g_breakIndicatorMod->m_lastBlock == nullptr) {
-            g_breakIndicatorMod->m_lastUpdate = now;
-        }
-        
-        float elapsed_ms = std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(now - g_breakIndicatorMod->m_lastUpdate).count();
-        
-        
-        if (elapsed_ms > 150.0f || g_breakIndicatorMod->m_lastBlock != block || g_breakIndicatorMod->m_progress >= 1.0f) {
-            g_breakIndicatorMod->m_progress = 0.0f;
-            elapsed_ms = 0.0f; 
-        }
-        
-        
-        
-        
-        if (increment > 0.0f) {
-            g_breakIndicatorMod->m_progress += elapsed_ms * (increment / 50.0f);
-        }
-        
-        if (g_breakIndicatorMod->m_progress > 1.0f) {
-            g_breakIndicatorMod->m_progress = 1.0f;
-        }
-        
-        g_breakIndicatorMod->m_lastBlock = block;
-        g_breakIndicatorMod->m_lastUpdate = now;
-    }
-    
-    return increment;
-}
-
-BreakIndicatorModule::BreakIndicatorModule() 
+BreakIndicatorModule::BreakIndicatorModule()
     : Module("Break Indicator", "Displays a progress bar when breaking blocks.") {
-    m_patched = false;
-    m_patchTarget = nullptr;
-    g_breakIndicatorMod = this;
-}
-
-BreakIndicatorModule::~BreakIndicatorModule() {
-    if (g_breakIndicatorMod == this) g_breakIndicatorMod = nullptr;
 }
 
 void BreakIndicatorModule::onInit() {
-    if (m_patchTarget) return;
-    uintptr_t addr = bedrocktools::memory::resolve(bedrocktools::memory::SignatureId::GetDestroyProgress);
-    if (addr != 0) {
-        m_patchTarget = (void*)addr;
-    }
-}
+    bedrocktools::events::bus().subscribe<bedrocktools::events::GameModeActionEvent>([this](auto& event) {
+        if (event.action == bedrocktools::events::GameModeAction::StartDestroyBlock) {
+            m_gameMode = event.gameMode;
+            m_breaking = m_gameMode != nullptr;
+            m_progress = 0.0f;
+            m_lastUpdate = std::chrono::steady_clock::now();
+        } else if (event.action == bedrocktools::events::GameModeAction::StopDestroyBlock &&
+                   (!m_gameMode || m_gameMode == event.gameMode)) {
+            m_gameMode = nullptr;
+            m_breaking = false;
+            m_progress = 0.0f;
+            m_lastUpdate = std::chrono::steady_clock::now();
+        }
+    });
 
-void BreakIndicatorModule::applyPatch() {
-    if (m_patched || !m_patchTarget) return;
-    bedrocktools::hooks::install(m_patchTarget, (void*)_getDestroyProgress_hook, (void**)&_getDestroyProgress_orig);
-    m_patched = true;
+    bedrocktools::events::bus().subscribe<bedrocktools::events::LocalPlayerTickEvent>([this](auto&) {
+        if (!m_breaking || !m_gameMode) return;
+        float progress = *reinterpret_cast<float*>(
+            reinterpret_cast<std::uintptr_t>(m_gameMode) +
+            bedrocktools::sdk::offsets::GameMode::mDestroyProgress);
+        if (std::isfinite(progress) && progress > 0.0f) {
+            m_progress = progress > 1.0f ? 1.0f : progress;
+        } else {
+            m_progress = 0.0f;
+        }
+        m_lastUpdate = std::chrono::steady_clock::now();
+    });
 }
 
 void BreakIndicatorModule::onEnable() {
-    applyPatch();
+    m_gameMode = nullptr;
+    m_breaking = false;
+    m_progress = 0.0f;
+    m_lastUpdate = std::chrono::steady_clock::now();
 }
 
 void BreakIndicatorModule::onDisable() {
+    m_gameMode = nullptr;
+    m_breaking = false;
+    m_progress = 0.0f;
 }
 
 void BreakIndicatorModule::onFrame() {
     if (!enabled) return;
 
     auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastUpdate).count();
-    
-    float drawProgress = m_progress;
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastUpdate).count() > 250) {
+        m_gameMode = nullptr;
+        m_breaking = false;
+        m_progress = 0.0f;
+    }
 
-    
-    if (elapsed > 150 || m_progress <= 0.0f) {
-        if (!m_alwaysShow) {
-            
-            std::vector<PLModMenu_DrawCommand> cmds;
-            submitDrawCommands(moduleId, cmds);
-            return;
-        } else {
-            
-            drawProgress = 0.0f;
-        }
+    float drawProgress = m_breaking ? m_progress : 0.0f;
+
+    if (drawProgress <= 0.0f && !m_alwaysShow) {
+        std::vector<PLModMenu_DrawCommand> cmds;
+        submitDrawCommands(moduleId, cmds);
+        return;
     }
 
     std::vector<PLModMenu_DrawCommand> cmds;
 
-    
     if (m_outline) {
         PLModMenu_DrawCommand outlineCmd = {};
         outlineCmd.type = PL_DRAW_RECT_FILLED;
@@ -133,20 +103,18 @@ void BreakIndicatorModule::onFrame() {
         cmds.push_back(outlineCmd);
     }
 
-    
     if (m_background) {
         PLModMenu_DrawCommand bgCmd = {};
         bgCmd.type = PL_DRAW_RECT_FILLED;
-        bgCmd.x = hudPosX; 
+        bgCmd.x = hudPosX;
         bgCmd.y = hudPosY;
-        bgCmd.w = m_width; 
+        bgCmd.w = m_width;
         bgCmd.h = m_height;
         bgCmd.x3 = m_cornerRadius;
         bgCmd.color = ((int)(m_backgroundOpacity * 255.0f) << 24) | 0x000000;
         cmds.push_back(bgCmd);
     }
 
-    
     uint32_t barColor = m_barColorHex;
     if (m_rainbow) {
         m_rainbowHue += 0.002f * m_rainbowSpeed;
@@ -155,29 +123,27 @@ void BreakIndicatorModule::onFrame() {
         indicatorHSVtoRGB(m_rainbowHue, 1.0f, 1.0f, r, g, b);
         barColor = (0xFF << 24) | (((int)(r * 255)) << 16) | (((int)(g * 255)) << 8) | ((int)(b * 255));
     } else {
-        barColor = (0xFF << 24) | (barColor & 0x00FFFFFF); 
+        barColor = (0xFF << 24) | (barColor & 0x00FFFFFF);
     }
 
-    
     if (drawProgress > 0.001f) {
         PLModMenu_DrawCommand barCmd = {};
         barCmd.type = PL_DRAW_RECT_FILLED;
-        barCmd.x = hudPosX; 
+        barCmd.x = hudPosX;
         barCmd.y = hudPosY;
-        barCmd.w = m_width * drawProgress; 
+        barCmd.w = m_width * drawProgress;
         barCmd.h = m_height;
         barCmd.x3 = m_cornerRadius;
         barCmd.color = barColor;
         cmds.push_back(barCmd);
     }
 
-    
     std::string text = std::to_string((int)(drawProgress * 100)) + "%";
     PLModMenu_DrawCommand txtCmd = {};
     txtCmd.type = PL_DRAW_TEXT;
     txtCmd.x = hudPosX;
     txtCmd.y = hudPosY;
-    txtCmd.w = m_width;  
+    txtCmd.w = m_width;
     txtCmd.h = m_height;
     txtCmd.color = (0xFF << 24) | (m_textColorHex & 0x00FFFFFF);
     txtCmd.size = m_textSize;
