@@ -9,13 +9,17 @@
 #include <pl/ModMenu.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
 
 
 // =============================================================================
-// GLOBAL MODULE INSTANCE
+// GLOBAL INSTANCE
 // =============================================================================
 
 static ZoomModule* g_zoomMod =
@@ -23,7 +27,7 @@ static ZoomModule* g_zoomMod =
 
 
 // =============================================================================
-// BUTTON ID
+// BUTTON
 // =============================================================================
 
 namespace {
@@ -35,20 +39,8 @@ constexpr std::string_view kZoomButtonId =
 
 
 // =============================================================================
-// ANDROID MOTION EVENT CONSTANTS
+// ANDROID TOUCH ACTIONS
 // =============================================================================
-//
-// Android MotionEvent:
-//
-// ACTION_DOWN         = 0
-// ACTION_UP           = 1
-// ACTION_MOVE         = 2
-// ACTION_CANCEL       = 3
-// ACTION_POINTER_DOWN = 5
-// ACTION_POINTER_UP   = 6
-//
-// pl::input::TouchEvent.action menerima actionMasked dari launcher.
-//
 
 namespace {
 
@@ -70,6 +62,102 @@ constexpr int kActionPointerDown =
 constexpr int kActionPointerUp =
     6;
 
+}
+
+
+// =============================================================================
+// RAW GAMEACTIVITY MOTION EVENT LAYOUT
+// =============================================================================
+//
+// Dikonfirmasi dari:
+// Minecraft Bedrock Android 1.26.45.1
+//
+// GameActivityMotionEvent_fromJava
+//
+// Output GameActivityMotionEvent:
+//
+// +0x38 = pointerCount
+// +0x3C = pointer[0]
+// stride pointer = 0xD0
+//
+// Pointer:
+//
+// +0x00 = pointerId
+// +0x04 = toolType
+// +0x08 = AXIS_X
+// +0x0C = AXIS_Y
+//
+// Kita sengaja hanya membaca field minimum yang dibutuhkan.
+// Tidak membuat struct penuh agar implementation tetap ringan.
+//
+
+namespace raw_motion {
+
+constexpr std::size_t kPointerCountOffset =
+    0x38;
+
+constexpr std::size_t kPointerBaseOffset =
+    0x3C;
+
+constexpr std::size_t kPointerStride =
+    0xD0;
+
+constexpr std::size_t kPointerIdOffset =
+    0x00;
+
+constexpr std::size_t kPointerYOffset =
+    0x0C;
+
+constexpr int32_t kMaxReasonablePointers =
+    16;
+
+
+// -----------------------------------------------------------------------------
+// Helper unaligned-safe.
+//
+// Walaupun field ini 4-byte aligned pada layout sekarang,
+// memcpy menghindari strict-aliasing issue.
+// -----------------------------------------------------------------------------
+
+template <typename T>
+T readValue(
+    const std::uint8_t* base,
+    std::size_t offset
+) {
+
+    T value {};
+
+    std::memcpy(
+        &value,
+        base + offset,
+        sizeof(T)
+    );
+
+    return value;
+}
+
+}
+
+
+// =============================================================================
+// TIME HELPER
+// =============================================================================
+
+static uint64_t nowMs() {
+
+    using namespace std::chrono;
+
+
+    return static_cast<uint64_t>(
+
+        duration_cast<milliseconds>(
+
+            steady_clock::now()
+                .time_since_epoch()
+
+        ).count()
+
+    );
 }
 
 
@@ -112,10 +200,10 @@ static float _getFov_zoom_hook(
 
 
     // =========================================================================
-    // FILTER SPECIAL FOV
+    // SPECIAL FOV FILTER
     // =========================================================================
     //
-    // Logic ini sengaja belum kita ubah.
+    // Belum kita ubah pada tahap raw input ini.
     //
 
     if (
@@ -136,7 +224,7 @@ static float _getFov_zoom_hook(
 
 
     // =========================================================================
-    // FIRST ZOOM FRAME
+    // FIRST FRAME
     // =========================================================================
 
     if (g_zoomMod->m_isFirstTime) {
@@ -161,10 +249,15 @@ static float _getFov_zoom_hook(
 
 
         g_zoomMod->m_currentFov =
+
             std::lerp(
+
                 g_zoomMod->m_currentFov,
+
                 g_zoomMod->m_targetZoomFov,
+
                 g_zoomMod->m_animSpeed
+
             );
 
 
@@ -174,24 +267,33 @@ static float _getFov_zoom_hook(
 
 
     // =========================================================================
-    // ZOOM RELEASE ANIMATION
+    // RETURN ANIMATION
     // =========================================================================
 
     if (!g_zoomMod->m_animationFinished) {
 
         g_zoomMod->m_currentFov =
+
             std::lerp(
+
                 g_zoomMod->m_currentFov,
+
                 originalFov,
+
                 g_zoomMod->m_animSpeed
+
             );
 
 
         if (
+
             std::abs(
+
                 g_zoomMod->m_currentFov -
                 originalFov
+
             ) < 0.2f
+
         ) {
 
             g_zoomMod->m_animationFinished =
@@ -214,7 +316,7 @@ static float _getFov_zoom_hook(
 
 
 // =============================================================================
-// CAMERA SENSITIVITY HOOK
+// CAMERA SENSITIVITY
 // =============================================================================
 
 struct Vec2 {
@@ -237,7 +339,10 @@ static void _applyTurnDelta_hook(
 ) {
 
     if (
+
         g_zoomMod &&
+
+        rotationDelta &&
 
         (
             g_zoomMod->isZoomActive() ||
@@ -247,11 +352,8 @@ static void _applyTurnDelta_hook(
         g_zoomMod->m_lowSens &&
 
         g_zoomMod->m_baseFov > 0.1f
-    ) {
 
-        // =====================================================================
-        // ZOOM RATIO
-        // =====================================================================
+    ) {
 
         float zoomRatio =
 
@@ -260,13 +362,8 @@ static void _applyTurnDelta_hook(
 
 
         float strength =
-
             g_zoomMod->m_lowSensStrength;
 
-
-        // =====================================================================
-        // SENSITIVITY MULTIPLIER
-        // =====================================================================
 
         float multiplier =
 
@@ -283,9 +380,13 @@ static void _applyTurnDelta_hook(
         multiplier =
 
             std::clamp(
+
                 multiplier,
+
                 0.01f,
+
                 1.0f
+
             );
 
 
@@ -322,7 +423,7 @@ static void _applyTurnDelta_hook(
 
 
 // =============================================================================
-// HIDE HAND HOOK
+// HIDE HAND
 // =============================================================================
 
 static bool (*_getHideItemInHand_orig)(
@@ -341,6 +442,7 @@ static bool _getHideItemInHand_hook(
     if (_getHideItemInHand_orig) {
 
         hide =
+
             _getHideItemInHand_orig(
                 _this
             );
@@ -348,9 +450,13 @@ static bool _getHideItemInHand_hook(
 
 
     if (
+
         g_zoomMod &&
+
         g_zoomMod->isZoomActive() &&
+
         g_zoomMod->m_hideHand
+
     ) {
 
         return true;
@@ -362,16 +468,127 @@ static bool _getHideItemInHand_hook(
 
 
 // =============================================================================
-// TOUCH INPUT BRIDGE
+// RAW GameActivityMotionEvent_fromJava
 // =============================================================================
 //
-// Callback ini dipanggil oleh PreloaderInput.
+// ABI hasil RE Minecraft 1.26.45.1:
 //
-// PENTING:
+// x0 = JNIEnv*
+// x1 = Java MotionEvent object
+// x2 = GameActivityMotionEvent* output
+// w3 = pointerCount
+// x4/w4 = history size / related count
 //
-// Jangan consume ACTION_MOVE milik Zoom.
-// Kita tetap return false agar Android View milik ButtonBuilder terus menerima
-// stream touch yang sama sampai ACTION_UP.
+// Kita tidak membutuhkan JNI type secara langsung,
+// sehingga gunakan void* untuk argumen opaque.
+//
+
+using GameActivityMotionEventFromJavaFn =
+
+    void (*)(
+        void* env,
+        void* javaMotionEvent,
+        void* outputEvent,
+        int32_t pointerCount,
+        int32_t historySize
+    );
+
+
+static GameActivityMotionEventFromJavaFn
+    _gameActivityMotionEventFromJava_orig =
+        nullptr;
+
+
+// -----------------------------------------------------------------------------
+// Hook
+// -----------------------------------------------------------------------------
+//
+// ORIGINAL DIPANGGIL DULU.
+//
+// Ini penting karena GameActivityMotionEvent_fromJava adalah fungsi yang
+// mengisi outputEvent.
+//
+// Baru setelah selesai kita membaca pointer array.
+//
+
+static void _gameActivityMotionEventFromJava_hook(
+    void* env,
+    void* javaMotionEvent,
+    void* outputEvent,
+    int32_t pointerCount,
+    int32_t historySize
+) {
+
+    if (_gameActivityMotionEventFromJava_orig) {
+
+        _gameActivityMotionEventFromJava_orig(
+
+            env,
+            javaMotionEvent,
+            outputEvent,
+            pointerCount,
+            historySize
+
+        );
+    }
+
+
+    // =========================================================================
+    // FAST EXIT
+    // =========================================================================
+    //
+    // Jalur normal gameplay hanya melewati beberapa branch.
+    //
+
+    if (!g_zoomMod) {
+
+        return;
+    }
+
+
+    if (!g_zoomMod->enabled) {
+
+        return;
+    }
+
+
+    if (!g_zoomMod->m_buttonZooming) {
+
+        return;
+    }
+
+
+    if (g_zoomMod->m_zoomPointerId < 0) {
+
+        return;
+    }
+
+
+    if (!outputEvent) {
+
+        return;
+    }
+
+
+    g_zoomMod->processRawMotion(
+        outputEvent
+    );
+}
+
+
+// =============================================================================
+// PL TOUCH CALLBACK
+// =============================================================================
+//
+// TouchEvent launcher sekarang HANYA dipakai untuk:
+//
+//     DOWN
+//     POINTER_DOWN
+//     UP
+//     POINTER_UP
+//     CANCEL
+//
+// ACTION_MOVE sama sekali tidak dipakai untuk menghitung zoom.
 //
 
 static bool _onTouchBridge(
@@ -416,131 +633,34 @@ static void _onZoomButtonEvent(
     switch (event) {
 
         // =====================================================================
-        // BUTTON DOWN
+        // HOLD START
         // =====================================================================
-        //
-        // Urutan launcher:
-        //
-        // PreloaderInput ACTION_DOWN
-        //         ↓
-        // cache pointerId + y
-        //         ↓
-        // ExternalButtonOverlay ACTION_DOWN
-        //         ↓
-        // ButtonEvent::Down
-        //
-        // Karena itu di titik ini kita sudah mengetahui pointerId tombol.
-        //
 
         case pl::modmenu::ButtonEvent::Down:
         {
 
-            if (!g_zoomMod->enabled) {
-
-                return;
-            }
-
-
-            // -----------------------------------------------------------------
-            // Ambil pointer yang tadi dicache oleh PreloaderInput.
-            // -----------------------------------------------------------------
-
-            if (g_zoomMod->m_pendingTouchValid) {
-
-                g_zoomMod->m_trackedPointerId =
-                    g_zoomMod->m_pendingPointerId;
-
-
-                g_zoomMod->m_lastTouchY =
-                    g_zoomMod->m_pendingTouchY;
-
-            } else {
-
-                //
-                // Seharusnya jarang terjadi.
-                //
-                // -1 berarti drag tidak dijalankan sampai pointer diketahui.
-                //
-
-                g_zoomMod->m_trackedPointerId =
-                    -1;
-            }
-
-
-            // -----------------------------------------------------------------
-            // Pending pointer sudah digunakan.
-            // -----------------------------------------------------------------
-
-            g_zoomMod->m_pendingTouchValid =
-                false;
-
-
-            g_zoomMod->m_pendingPointerId =
-                -1;
-
-
-            // -----------------------------------------------------------------
-            // Mulai Zoom.
-            // -----------------------------------------------------------------
-
-            if (!g_zoomMod->m_buttonZooming) {
-
-                g_zoomMod->m_isFirstTime =
-                    true;
-
-
-                g_zoomMod->m_animationFinished =
-                    false;
-
-
-                g_zoomMod->m_targetZoomFov =
-                    g_zoomMod->m_defaultZoomFov;
-
-
-                g_zoomMod->m_buttonZooming =
-                    true;
-            }
-
+            g_zoomMod->beginButtonZoom();
 
             break;
         }
 
 
         // =====================================================================
-        // BUTTON UP
+        // HOLD END
         // =====================================================================
 
         case pl::modmenu::ButtonEvent::Up:
         {
 
-            g_zoomMod->m_buttonZooming =
-                false;
-
-
-            g_zoomMod->m_trackedPointerId =
-                -1;
-
-
-            g_zoomMod->m_pendingPointerId =
-                -1;
-
-
-            g_zoomMod->m_pendingTouchValid =
-                false;
-
+            g_zoomMod->endButtonZoom();
 
             break;
         }
 
 
         // =====================================================================
-        // GENERIC SCROLL
+        // MOUSE / TRACKPAD WHEEL
         // =====================================================================
-        //
-        // Ini BUKAN touchscreen swipe.
-        //
-        // Tetap kita pertahankan untuk mouse wheel / trackpad.
-        //
 
         case pl::modmenu::ButtonEvent::Scroll:
         {
@@ -548,7 +668,6 @@ static void _onZoomButtonEvent(
             g_zoomMod->onScroll(
                 value
             );
-
 
             break;
         }
@@ -609,13 +728,13 @@ ZoomModule::~ZoomModule() {
 
 
 // =============================================================================
-// MODULE INIT
+// INIT
 // =============================================================================
 
 void ZoomModule::onInit() {
 
     // =========================================================================
-    // FOV HOOK
+    // FOV
     // =========================================================================
 
     if (!m_fovHooked) {
@@ -632,31 +751,33 @@ void ZoomModule::onInit() {
 
         if (addr != 0) {
 
-            bedrocktools::hooks::install(
+            auto hook =
 
-                reinterpret_cast<void*>(
-                    addr
-                ),
+                bedrocktools::hooks::install(
 
-                reinterpret_cast<void*>(
-                    _getFov_zoom_hook
-                ),
+                    reinterpret_cast<void*>(
+                        addr
+                    ),
 
-                reinterpret_cast<void**>(
-                    &_getFov_orig
-                )
+                    reinterpret_cast<void*>(
+                        _getFov_zoom_hook
+                    ),
 
-            );
+                    reinterpret_cast<void**>(
+                        &_getFov_orig
+                    )
+
+                );
 
 
             m_fovHooked =
-                true;
+                hook != nullptr;
         }
     }
 
 
     // =========================================================================
-    // CAMERA TURN DELTA HOOK
+    // TURN DELTA
     // =========================================================================
 
     if (!m_turnDeltaHooked) {
@@ -674,31 +795,33 @@ void ZoomModule::onInit() {
 
         if (addr != 0) {
 
-            bedrocktools::hooks::install(
+            auto hook =
 
-                reinterpret_cast<void*>(
-                    addr
-                ),
+                bedrocktools::hooks::install(
 
-                reinterpret_cast<void*>(
-                    _applyTurnDelta_hook
-                ),
+                    reinterpret_cast<void*>(
+                        addr
+                    ),
 
-                reinterpret_cast<void**>(
-                    &_applyTurnDelta_orig
-                )
+                    reinterpret_cast<void*>(
+                        _applyTurnDelta_hook
+                    ),
 
-            );
+                    reinterpret_cast<void**>(
+                        &_applyTurnDelta_orig
+                    )
+
+                );
 
 
             m_turnDeltaHooked =
-                true;
+                hook != nullptr;
         }
     }
 
 
     // =========================================================================
-    // HIDE HAND HOOK
+    // HIDE HAND
     // =========================================================================
 
     if (!m_hideHandHooked) {
@@ -716,37 +839,36 @@ void ZoomModule::onInit() {
 
         if (addr != 0) {
 
-            bedrocktools::hooks::install(
+            auto hook =
 
-                reinterpret_cast<void*>(
-                    addr
-                ),
+                bedrocktools::hooks::install(
 
-                reinterpret_cast<void*>(
-                    _getHideItemInHand_hook
-                ),
+                    reinterpret_cast<void*>(
+                        addr
+                    ),
 
-                reinterpret_cast<void**>(
-                    &_getHideItemInHand_orig
-                )
+                    reinterpret_cast<void*>(
+                        _getHideItemInHand_hook
+                    ),
 
-            );
+                    reinterpret_cast<void**>(
+                        &_getHideItemInHand_orig
+                    )
+
+                );
 
 
             m_hideHandHooked =
-                true;
+                hook != nullptr;
         }
     }
 
 
     // =========================================================================
-    // TOUCH INPUT
+    // TOUCH CALLBACK
     // =========================================================================
     //
-    // Register sekali per process.
-    //
-    // API Levi belum menyediakan unregisterTouchCallback(),
-    // jadi callback tetap terdaftar dan mengecek g_zoomMod / enabled.
+    // Tetap hanya satu callback dan tidak ada unregister API.
     //
 
     if (!m_touchHooked) {
@@ -762,7 +884,75 @@ void ZoomModule::onInit() {
 
 
     // =========================================================================
-    // LEVI BUTTON BUILDER
+    // RAW GAMEACTIVITY MOTION HOOK
+    // =========================================================================
+    //
+    // Priority:
+    //
+    // 1. Cari exported symbol via dlsym.
+    // 2. Tidak hard-code RVA 0x0787D080.
+    //
+    // Dengan begitu jika update Minecraft hanya menggeser RVA,
+    // implementation masih punya peluang tetap bekerja.
+    //
+
+    if (!m_rawMotionHooked) {
+
+        auto handle =
+
+            bedrocktools::hooks::openLibrary(
+                "libminecraftpe.so"
+            );
+
+
+        if (handle) {
+
+            uintptr_t addr =
+
+                bedrocktools::hooks::symbol(
+
+                    handle,
+
+                    "GameActivityMotionEvent_fromJava"
+
+                );
+
+
+            if (addr != 0) {
+
+                auto hook =
+
+                    bedrocktools::hooks::install(
+
+                        reinterpret_cast<void*>(
+                            addr
+                        ),
+
+                        reinterpret_cast<void*>(
+                            _gameActivityMotionEventFromJava_hook
+                        ),
+
+                        reinterpret_cast<void**>(
+                            &_gameActivityMotionEventFromJava_orig
+                        )
+
+                    );
+
+
+                m_rawMotionHooked =
+                    hook != nullptr;
+            }
+
+
+            bedrocktools::hooks::closeLibrary(
+                handle
+            );
+        }
+    }
+
+
+    // =========================================================================
+    // BUTTON BUILDER
     // =========================================================================
 
     if (!m_buttonRegistered) {
@@ -808,10 +998,9 @@ void ZoomModule::onInit() {
 
 
             // -----------------------------------------------------------------
-            // Transparent wrapper.
+            // Transparent launcher wrapper.
             //
-            // Jangan ganti menjadi 0x00000000.
-            // Nilai 0 dianggap "gunakan default style" oleh launcher.
+            // Nilai harus != 0 supaya launcher tidak fallback ke Keycap color.
             // -----------------------------------------------------------------
 
             .styleColors(
@@ -840,10 +1029,6 @@ void ZoomModule::onInit() {
                 1.0f
             )
 
-
-            // -----------------------------------------------------------------
-            // Zoom icon asli launcher.
-            // -----------------------------------------------------------------
 
             .resourceIcon(
 
@@ -878,16 +1063,19 @@ void ZoomModule::onEnable() {
         false;
 
 
-    m_trackedPointerId =
+    m_candidatePointerId =
         -1;
 
 
-    m_pendingPointerId =
-        -1;
-
-
-    m_pendingTouchValid =
+    m_candidateValid =
         false;
+
+
+    m_waitingForZoomPointer =
+        false;
+
+
+    resetZoomPointer();
 }
 
 
@@ -909,21 +1097,24 @@ void ZoomModule::onDisable() {
         false;
 
 
-    m_trackedPointerId =
+    m_candidatePointerId =
         -1;
 
 
-    m_pendingPointerId =
-        -1;
-
-
-    m_pendingTouchValid =
+    m_candidateValid =
         false;
+
+
+    m_waitingForZoomPointer =
+        false;
+
+
+    resetZoomPointer();
 }
 
 
 // =============================================================================
-// ZOOM ACTIVE
+// ACTIVE STATE
 // =============================================================================
 
 bool ZoomModule::isZoomActive() {
@@ -942,16 +1133,197 @@ bool ZoomModule::isZoomActive() {
 
 
 // =============================================================================
-// TOUCHSCREEN SWIPE
+// CAPTURE POINTER
 // =============================================================================
+
+void ZoomModule::captureZoomPointer(
+    int32_t pointerId,
+    float initialY
+) {
+
+    if (pointerId < 0) {
+
+        return;
+    }
+
+
+    m_zoomPointerId =
+        pointerId;
+
+
+    m_lastRawY =
+        initialY;
+
+
+    //
+    // Jangan langsung anggap initialY berasal dari coordinate system
+    // yang sama persis dengan raw GameActivity Y.
+    //
+    // Frame raw pertama digunakan sebagai baseline.
+    //
+
+    m_hasLastRawY =
+        false;
+
+
+    m_waitingForZoomPointer =
+        false;
+}
+
+
+// =============================================================================
+// RESET POINTER
+// =============================================================================
+
+void ZoomModule::resetZoomPointer() {
+
+    m_zoomPointerId =
+        -1;
+
+
+    m_lastRawY =
+        0.0f;
+
+
+    m_hasLastRawY =
+        false;
+}
+
+
+// =============================================================================
+// BUTTON DOWN
+// =============================================================================
+
+void ZoomModule::beginButtonZoom() {
+
+    if (!enabled) {
+
+        return;
+    }
+
+
+    m_isFirstTime =
+        true;
+
+
+    m_animationFinished =
+        false;
+
+
+    m_targetZoomFov =
+        m_defaultZoomFov;
+
+
+    m_buttonZooming =
+        true;
+
+
+    // =========================================================================
+    // POINTER HANDSHAKE
+    // =========================================================================
+    //
+    // Candidate hanya valid dalam jendela waktu pendek.
+    //
+    // Ini mencegah pointer joystick lama dianggap sebagai pointer Zoom.
+    //
+
+    constexpr uint64_t kCandidateMaxAgeMs =
+        180;
+
+
+    const uint64_t currentTime =
+        nowMs();
+
+
+    const bool candidateFresh =
+
+        m_candidateValid &&
+
+        currentTime >=
+            m_candidateTimeMs &&
+
+        (
+            currentTime -
+            m_candidateTimeMs
+        ) <= kCandidateMaxAgeMs;
+
+
+    if (candidateFresh) {
+
+        captureZoomPointer(
+
+            m_candidatePointerId,
+
+            m_candidateY
+
+        );
+
+
+        m_candidateValid =
+            false;
+
+
+        m_candidatePointerId =
+            -1;
+
+    } else {
+
+        // ---------------------------------------------------------------------
+        // Kalau ButtonBuilder DOWN datang lebih dulu,
+        // TouchEvent DOWN berikutnya akan di-claim.
+        // ---------------------------------------------------------------------
+
+        resetZoomPointer();
+
+
+        m_waitingForZoomPointer =
+            true;
+    }
+}
+
+
+// =============================================================================
+// BUTTON UP
+// =============================================================================
+
+void ZoomModule::endButtonZoom() {
+
+    m_buttonZooming =
+        false;
+
+
+    m_waitingForZoomPointer =
+        false;
+
+
+    m_candidateValid =
+        false;
+
+
+    m_candidatePointerId =
+        -1;
+
+
+    resetZoomPointer();
+}
+
+
+// =============================================================================
+// TOUCH EVENT
+// =============================================================================
+//
+// Sekarang fungsi ini sangat ringan.
+//
+// Tidak ada ACTION_MOVE handling.
+// Tidak ada hit-test.
+// Tidak ada perhitungan drag.
+//
+// Hanya melakukan pointer handshake.
+//
 
 bool ZoomModule::onTouchEvent(
     const pl::input::TouchEvent& ev
 ) {
-
-    // =========================================================================
-    // Module disabled
-    // =========================================================================
 
     if (!enabled) {
 
@@ -959,137 +1331,107 @@ bool ZoomModule::onTouchEvent(
     }
 
 
-    const int action =
-        ev.action;
-
-
-    switch (action) {
+    switch (ev.action) {
 
         // =====================================================================
-        // DOWN / POINTER DOWN
+        // POINTER DOWN
         // =====================================================================
-        //
-        // Kita belum tahu apakah DOWN ini berada pada tombol Zoom.
-        //
-        // Karena PreloaderInput dipanggil sebelum Android View/ButtonBuilder,
-        // cukup cache dulu.
-        //
-        // Kalau DOWN memang tombol Zoom, beberapa saat setelah ini
-        // ButtonEvent::Down akan mengambil cache tersebut.
-        //
 
         case kActionDown:
         case kActionPointerDown:
         {
 
-            m_pendingPointerId =
-                ev.pointerId;
+            const int32_t pointerId =
 
-
-            m_pendingTouchY =
-                ev.y;
-
-
-            m_pendingTouchValid =
-                true;
+                static_cast<int32_t>(
+                    ev.pointerId
+                );
 
 
             // -----------------------------------------------------------------
-            // JANGAN consume.
-            //
-            // ButtonBuilder masih harus menerima ACTION_DOWN ini.
-            // -----------------------------------------------------------------
-
-            return false;
-        }
-
-
-        // =====================================================================
-        // MOVE
-        // =====================================================================
-
-        case kActionMove:
-        {
-
-            // -----------------------------------------------------------------
-            // Hanya lakukan drag jika:
-            //
-            // 1. Zoom Button sedang ditahan.
-            // 2. Kita memiliki pointer tombol.
-            // 3. Pointer MOVE adalah pointer yang sama.
+            // Kalau ButtonBuilder sudah mengirim DOWN,
+            // pointer ini langsung menjadi Zoom pointer.
             // -----------------------------------------------------------------
 
             if (
+
                 m_buttonZooming &&
-                m_trackedPointerId != -1 &&
-                ev.pointerId == m_trackedPointerId
+                m_waitingForZoomPointer
+
             ) {
 
-                const float deltaY =
+                captureZoomPointer(
 
-                    ev.y -
-                    m_lastTouchY;
+                    pointerId,
 
+                    ev.y
 
-                m_lastTouchY =
-                    ev.y;
-
-
-                updateDrag(
-                    deltaY
                 );
+
+
+                return false;
             }
 
 
             // -----------------------------------------------------------------
-            // PENTING:
-            //
-            // Jangan return true.
-            //
-            // Kalau MOVE dikonsumsi di sini, ExternalButtonOverlay bisa
-            // kehilangan stream MotionEvent dan event UP/pressed-state
-            // menjadi bermasalah.
+            // Kalau TouchEvent datang lebih dahulu,
+            // simpan sebagai candidate.
             // -----------------------------------------------------------------
+
+            m_candidatePointerId =
+                pointerId;
+
+
+            m_candidateY =
+                ev.y;
+
+
+            m_candidateTimeMs =
+                nowMs();
+
+
+            m_candidateValid =
+                true;
+
 
             return false;
         }
 
 
         // =====================================================================
-        // UP / POINTER UP
+        // POINTER UP
         // =====================================================================
 
         case kActionUp:
         case kActionPointerUp:
         {
 
-            // -----------------------------------------------------------------
-            // Jangan mematikan m_buttonZooming di sini.
-            //
-            // Biarkan ButtonBuilder::Up menjadi source-of-truth untuk release
-            // tombol dan icon pressed state.
-            // -----------------------------------------------------------------
+            const int32_t pointerId =
+
+                static_cast<int32_t>(
+                    ev.pointerId
+                );
+
 
             if (
-                ev.pointerId ==
-                m_trackedPointerId
+                pointerId ==
+                m_zoomPointerId
             ) {
 
-                m_trackedPointerId =
-                    -1;
+                resetZoomPointer();
             }
 
 
             if (
-                ev.pointerId ==
-                m_pendingPointerId
+                pointerId ==
+                m_candidatePointerId
             ) {
 
-                m_pendingPointerId =
+                m_candidatePointerId =
                     -1;
 
 
-                m_pendingTouchValid =
+                m_candidateValid =
                     false;
             }
 
@@ -1105,22 +1447,35 @@ bool ZoomModule::onTouchEvent(
         case kActionCancel:
         {
 
-            m_trackedPointerId =
+            m_candidatePointerId =
                 -1;
 
 
-            m_pendingPointerId =
-                -1;
-
-
-            m_pendingTouchValid =
+            m_candidateValid =
                 false;
+
+
+            m_waitingForZoomPointer =
+                false;
+
+
+            resetZoomPointer();
 
 
             return false;
         }
 
 
+        // =====================================================================
+        // MOVE
+        // =====================================================================
+        //
+        // Sengaja TIDAK diproses.
+        //
+        // MOVE ditangani GameActivityMotionEvent_fromJava.
+        //
+
+        case kActionMove:
         default:
             break;
     }
@@ -1131,7 +1486,218 @@ bool ZoomModule::onTouchEvent(
 
 
 // =============================================================================
-// TOUCHSCREEN DRAG -> FOV
+// PROCESS RAW MOTION
+// =============================================================================
+
+void ZoomModule::processRawMotion(
+    const void* motionEvent
+) {
+
+    if (!motionEvent) {
+
+        return;
+    }
+
+
+    if (!m_buttonZooming) {
+
+        return;
+    }
+
+
+    if (m_zoomPointerId < 0) {
+
+        return;
+    }
+
+
+    const auto* base =
+
+        static_cast<
+            const std::uint8_t*
+        >(
+            motionEvent
+        );
+
+
+    // =========================================================================
+    // POINTER COUNT
+    // =========================================================================
+
+    const int32_t pointerCount =
+
+        raw_motion::readValue<int32_t>(
+
+            base,
+
+            raw_motion::
+                kPointerCountOffset
+
+        );
+
+
+    // =========================================================================
+    // BASIC SANITY
+    // =========================================================================
+    //
+    // BetterZoom sendiri juga membatasi jumlah pointer sebelum memproses.
+    //
+    // Kita gunakan limit kecil supaya pointerCount corrupt tidak pernah
+    // membuat loop besar / invalid memory traversal.
+    //
+
+    if (
+
+        pointerCount <= 0 ||
+
+        pointerCount >
+            raw_motion::
+                kMaxReasonablePointers
+
+    ) {
+
+        return;
+    }
+
+
+    // =========================================================================
+    // FIND ZOOM POINTER
+    // =========================================================================
+
+    for (
+        int32_t i = 0;
+        i < pointerCount;
+        ++i
+    ) {
+
+        const std::size_t pointerOffset =
+
+            raw_motion::
+                kPointerBaseOffset +
+
+            static_cast<std::size_t>(i) *
+
+            raw_motion::
+                kPointerStride;
+
+
+        const auto* pointer =
+
+            base +
+            pointerOffset;
+
+
+        const int32_t pointerId =
+
+            raw_motion::readValue<int32_t>(
+
+                pointer,
+
+                raw_motion::
+                    kPointerIdOffset
+
+            );
+
+
+        if (
+            pointerId !=
+            m_zoomPointerId
+        ) {
+
+            continue;
+        }
+
+
+        // =====================================================================
+        // RAW Y
+        // =====================================================================
+        //
+        // AXIS_Y adalah +0x0C relatif terhadap pointer record.
+        //
+        // Ini dikonfirmasi dari disassembly 1.26.45.1:
+        // GameActivityMotionEvent_fromJava mengisi axis array mulai +0x08,
+        // sehingga axis 1/Y berada di +0x0C.
+        //
+
+        const float currentY =
+
+            raw_motion::readValue<float>(
+
+                pointer,
+
+                raw_motion::
+                    kPointerYOffset
+
+            );
+
+
+        if (!std::isfinite(currentY)) {
+
+            return;
+        }
+
+
+        // =====================================================================
+        // FIRST RAW SAMPLE
+        // =====================================================================
+
+        if (!m_hasLastRawY) {
+
+            m_lastRawY =
+                currentY;
+
+
+            m_hasLastRawY =
+                true;
+
+
+            return;
+        }
+
+
+        // =====================================================================
+        // DELTA
+        // =====================================================================
+
+        const float deltaY =
+
+            currentY -
+            m_lastRawY;
+
+
+        m_lastRawY =
+            currentY;
+
+
+        // =====================================================================
+        // IGNORE TINY FLOAT NOISE
+        // =====================================================================
+
+        if (
+            std::abs(deltaY) <
+            0.01f
+        ) {
+
+            return;
+        }
+
+
+        // =====================================================================
+        // APPLY
+        // =====================================================================
+
+        updateDrag(
+            deltaY
+        );
+
+
+        return;
+    }
+}
+
+
+// =============================================================================
+// DRAG -> FOV
 // =============================================================================
 
 void ZoomModule::updateDrag(
@@ -1145,44 +1711,24 @@ void ZoomModule::updateDrag(
 
 
     // =========================================================================
-    // DRAG SENSITIVITY
+    // DIRECTION
     // =========================================================================
     //
-    // Android Y:
+    // UP:
     //
-    // swipe UP:
-    //     Y mengecil
-    //     deltaY negatif
-    //
-    // swipe DOWN:
-    //     Y membesar
-    //     deltaY positif
+    // Y turun
+    // deltaY negatif
+    // FOV turun
+    // Zoom IN
     //
     //
-    // FOV:
+    // DOWN:
     //
-    // lebih kecil = zoom IN
-    // lebih besar = zoom OUT
+    // Y naik
+    // deltaY positif
+    // FOV naik
+    // Zoom OUT
     //
-    //
-    // Jadi:
-    //
-    // swipe UP
-    //     ↓
-    // delta negatif
-    //     ↓
-    // target FOV mengecil
-    //     ↓
-    // ZOOM IN
-    //
-    // swipe DOWN
-    //     ↓
-    // delta positif
-    //     ↓
-    // target FOV membesar
-    //     ↓
-    // ZOOM OUT
-    // =========================================================================
 
     constexpr float kDragSensitivity =
         0.08f;
@@ -1195,7 +1741,7 @@ void ZoomModule::updateDrag(
 
 
     // =========================================================================
-    // FOV LIMIT
+    // LIMITS
     // =========================================================================
 
     constexpr float minLimit =
@@ -1213,10 +1759,6 @@ void ZoomModule::updateDrag(
         );
 
 
-    // =========================================================================
-    // APPLY
-    // =========================================================================
-
     m_targetZoomFov =
 
         std::clamp(
@@ -1233,13 +1775,8 @@ void ZoomModule::updateDrag(
 
 
 // =============================================================================
-// GENERIC SCROLL
+// GENERIC WHEEL
 // =============================================================================
-//
-// Mouse wheel / trackpad.
-//
-// Touchscreen swipe TIDAK menggunakan fungsi ini.
-//
 
 void ZoomModule::onScroll(
     float scrollDelta
@@ -1303,8 +1840,10 @@ void ZoomModule::onKeybindEvent(
 
 
     if (
+
         isDown &&
         !m_keyZooming
+
     ) {
 
         m_isFirstTime =
