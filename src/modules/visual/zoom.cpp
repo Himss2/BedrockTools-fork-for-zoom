@@ -58,7 +58,6 @@ static float _getFov_zoom_hook(
         );
     }
 
-
     if (!g_zoomMod) {
         return originalFov;
     }
@@ -66,8 +65,7 @@ static float _getFov_zoom_hook(
 
     // -------------------------------------------------------------------------
     // Abaikan FOV khusus UI / hand / inventory.
-    //
-    // Logic ini dipertahankan sama seperti implementasi sebelumnya.
+    // Logic ini sengaja belum diubah.
     // -------------------------------------------------------------------------
 
     if (
@@ -82,12 +80,13 @@ static float _getFov_zoom_hook(
     // Simpan base FOV Minecraft.
     // -------------------------------------------------------------------------
 
-    g_zoomMod->m_baseFov = originalFov;
+    g_zoomMod->m_baseFov =
+        originalFov;
 
 
     // -------------------------------------------------------------------------
-    // Saat zoom dimulai untuk pertama kali,
-    // current FOV harus dimulai dari FOV Minecraft sekarang.
+    // Saat zoom dimulai pertama kali,
+    // mulai animasi dari FOV Minecraft sekarang.
     // -------------------------------------------------------------------------
 
     if (g_zoomMod->m_isFirstTime) {
@@ -123,9 +122,8 @@ static float _getFov_zoom_hook(
 
 
     // -------------------------------------------------------------------------
-    // Zoom dilepas.
-    //
-    // Smoothly kembali menuju FOV Minecraft.
+    // Zoom sudah dilepas.
+    // Smooth kembali ke FOV normal.
     // -------------------------------------------------------------------------
 
     if (!g_zoomMod->m_animationFinished) {
@@ -199,7 +197,7 @@ static void _applyTurnDelta_hook(
     ) {
 
         // ---------------------------------------------------------------------
-        // Hitung rasio FOV.
+        // Hitung rasio zoom.
         // ---------------------------------------------------------------------
 
         float zoomRatio =
@@ -212,7 +210,7 @@ static void _applyTurnDelta_hook(
 
 
         // ---------------------------------------------------------------------
-        // Kurangi camera sensitivity berdasarkan level zoom.
+        // Turunkan sensitivity saat zoom.
         // ---------------------------------------------------------------------
 
         float multiplier =
@@ -248,7 +246,6 @@ static void _applyTurnDelta_hook(
                 _this,
                 &modifiedDelta
             );
-
         }
 
     } else {
@@ -259,7 +256,6 @@ static void _applyTurnDelta_hook(
                 _this,
                 rotationDelta
             );
-
         }
 
     }
@@ -288,14 +284,8 @@ static bool _getHideItemInHand_hook(
             _getHideItemInHand_orig(
                 _this
             );
-
     }
 
-
-    // -------------------------------------------------------------------------
-    // Jika Zoom aktif dan Hide Hand aktif,
-    // force Minecraft untuk menyembunyikan tangan/item.
-    // -------------------------------------------------------------------------
 
     if (
         g_zoomMod &&
@@ -304,7 +294,6 @@ static bool _getHideItemInHand_hook(
     ) {
 
         return true;
-
     }
 
 
@@ -335,9 +324,7 @@ static void _onZoomButtonEvent(
     switch (event) {
 
         // ---------------------------------------------------------------------
-        // Launcher ButtonBuilder:
-        //
-        // Finger mulai menekan tombol.
+        // Finger menekan tombol.
         // ---------------------------------------------------------------------
 
         case pl::modmenu::ButtonEvent::Down:
@@ -364,7 +351,6 @@ static void _onZoomButtonEvent(
 
                 g_zoomMod->m_buttonZooming =
                     true;
-
             }
 
 
@@ -373,7 +359,7 @@ static void _onZoomButtonEvent(
 
 
         // ---------------------------------------------------------------------
-        // Finger dilepas dari tombol.
+        // Finger dilepas.
         // ---------------------------------------------------------------------
 
         case pl::modmenu::ButtonEvent::Up:
@@ -388,9 +374,10 @@ static void _onZoomButtonEvent(
 
 
         // ---------------------------------------------------------------------
-        // Scroll event.
+        // Generic scroll event.
         //
-        // Dipertahankan untuk compatibility.
+        // BUKAN drag touchscreen.
+        // Ini tetap dipertahankan untuk kompatibilitas mouse / trackpad.
         // ---------------------------------------------------------------------
 
         case pl::modmenu::ButtonEvent::Scroll:
@@ -412,7 +399,7 @@ static void _onZoomButtonEvent(
 
 
 // =============================================================================
-// MODULE CONSTRUCTOR
+// CONSTRUCTOR
 // =============================================================================
 
 ZoomModule::ZoomModule()
@@ -422,22 +409,20 @@ ZoomModule::ZoomModule()
     )
 {
 
-    this->keybind = 0;
+    this->keybind =
+        0;
 
 
-    g_zoomMod = this;
+    g_zoomMod =
+        this;
 }
 
 
 // =============================================================================
-// MODULE DESTRUCTOR
+// DESTRUCTOR
 // =============================================================================
 
 ZoomModule::~ZoomModule() {
-
-    // -------------------------------------------------------------------------
-    // Lepaskan ButtonBuilder ketika module object dihancurkan.
-    // -------------------------------------------------------------------------
 
     if (m_buttonRegistered) {
 
@@ -455,13 +440,12 @@ ZoomModule::~ZoomModule() {
 
         g_zoomMod =
             nullptr;
-
     }
 }
 
 
 // =============================================================================
-// MODULE INIT
+// INIT
 // =============================================================================
 
 void ZoomModule::onInit() {
@@ -505,7 +489,7 @@ void ZoomModule::onInit() {
 
 
     // =========================================================================
-    // TURN DELTA / CAMERA SENSITIVITY HOOK
+    // CAMERA TURN DELTA HOOK
     // =========================================================================
 
     if (!m_turnDeltaHooked) {
@@ -606,10 +590,7 @@ void ZoomModule::onInit() {
 
 
             // -----------------------------------------------------------------
-            // Hubungkan button ke module Zoom.
-            //
-            // Launcher akan mengatur runtime visibility berdasarkan
-            // moduleId ini.
+            // Hubungkan tombol ke module Zoom.
             // -----------------------------------------------------------------
 
             .moduleId(
@@ -619,8 +600,7 @@ void ZoomModule::onInit() {
 
             // -----------------------------------------------------------------
             // Label fallback.
-            //
-            // Tidak akan terlihat selama icon launcher berhasil dimuat.
+            // Icon akan menyembunyikannya.
             // -----------------------------------------------------------------
 
             .label(
@@ -629,7 +609,7 @@ void ZoomModule::onInit() {
 
 
             // -----------------------------------------------------------------
-            // Zoom bekerja sebagai HOLD button.
+            // Zoom = Hold button.
             // -----------------------------------------------------------------
 
             .behavior(
@@ -639,7 +619,7 @@ void ZoomModule::onInit() {
 
 
             // -----------------------------------------------------------------
-            // Tombol tampil secara default ketika module Zoom aktif.
+            // Tampil default.
             // -----------------------------------------------------------------
 
             .defaultVisible(
@@ -648,10 +628,7 @@ void ZoomModule::onInit() {
 
 
             // -----------------------------------------------------------------
-            // Gunakan infrastructure Keycap launcher.
-            //
-            // Background kemudian dibuat transparan karena Zoom bawaan
-            // launcher merupakan image-only button.
+            // Launcher tetap membutuhkan preset.
             // -----------------------------------------------------------------
 
             .stylePreset(
@@ -661,42 +638,54 @@ void ZoomModule::onInit() {
 
 
             // -----------------------------------------------------------------
-            // Hilangkan background ExternalButtonOverlay.
+            // IMPORTANT:
             //
-            // Yang terlihat hanya icon Zoom bawaan launcher.
+            // Jangan gunakan 0x00000000.
+            //
+            // ExternalButtonOverlay menganggap integer 0 sebagai:
+            // "tidak ada override", sehingga style Keycap default digunakan.
+            //
+            // 0x00000001 memiliki:
+            //
+            // A = 0x00  -> transparan
+            // RGB = 1
+            //
+            // Nilainya bukan 0, jadi launcher menerima ini sebagai override,
+            // tetapi secara visual tetap transparan.
+            //
+            // Ini menghilangkan background dan border tambahan di luar
+            // ic_zoom_normal / ic_zoom_pressed.
             // -----------------------------------------------------------------
 
             .styleColors(
 
-                0x00000000U,
-                0x00000000U,
-                0x00000000U
+                0x00000001U,
+
+                0x00000001U,
+
+                0x00000001U
 
             )
 
 
             // -----------------------------------------------------------------
-            // Text juga transparan.
-            //
-            // Label otomatis disembunyikan saat resourceIcon ditemukan,
-            // tetapi ini menjadi fallback supaya tidak muncul ZM di belakang.
+            // Text fallback juga transparan.
             // -----------------------------------------------------------------
 
             .textColor(
-                0x00000000U
+                0x00000001U
             )
 
 
             .activeTextColor(
-                0x00000000U
+                0x00000001U
             )
 
 
             // -----------------------------------------------------------------
-            // Ukuran dasar launcher.
+            // Base size launcher.
             //
-            // Posisi, size, dan opacity berikutnya dikelola HUD Editor
-            // launcher, bukan Mod Menu BedrockTools.
+            // Position / size / opacity selanjutnya dikontrol HUD Editor.
             // -----------------------------------------------------------------
 
             .sizeScale(
@@ -706,17 +695,17 @@ void ZoomModule::onInit() {
 
 
             // -----------------------------------------------------------------
-            // ICON ASLI ZOOM LEVI LAUNCHER
-            //
-            // Resource mode ExternalButtonOverlay menerima:
-            //
-            // "normalResource,activeResource"
+            // RESOURCE ICON ASLI LEVI LAUNCHER.
             //
             // Normal:
             //     ic_zoom_normal
             //
             // Pressed:
             //     ic_zoom_pressed
+            //
+            // Format resource ExternalButtonOverlay:
+            //
+            // normalResource,activeResource
             // -----------------------------------------------------------------
 
             .resourceIcon(
@@ -729,7 +718,7 @@ void ZoomModule::onInit() {
 
 
             // -----------------------------------------------------------------
-            // Native callback.
+            // Event callback.
             // -----------------------------------------------------------------
 
             .onEvent(
@@ -747,7 +736,7 @@ void ZoomModule::onInit() {
 
 
 // =============================================================================
-// MODULE ENABLE
+// ENABLE
 // =============================================================================
 
 void ZoomModule::onEnable() {
@@ -762,7 +751,7 @@ void ZoomModule::onEnable() {
 
 
 // =============================================================================
-// MODULE DISABLE
+// DISABLE
 // =============================================================================
 
 void ZoomModule::onDisable() {
@@ -798,7 +787,7 @@ bool ZoomModule::isZoomActive() {
 
 
 // =============================================================================
-// BUTTON SCROLL
+// SCROLL
 // =============================================================================
 
 void ZoomModule::onScroll(
@@ -872,7 +861,6 @@ void ZoomModule::onKeybindEvent(
 
         m_targetZoomFov =
             m_defaultZoomFov;
-
     }
 
 
@@ -904,7 +892,6 @@ void ZoomModule::loadConfig(
             j[
                 "m_defaultZoomFov"
             ].get<float>();
-
     }
 
 
@@ -918,7 +905,6 @@ void ZoomModule::loadConfig(
             j[
                 "m_targetZoomFov"
             ].get<float>();
-
     }
 
 
@@ -932,7 +918,6 @@ void ZoomModule::loadConfig(
             j[
                 "m_animSpeed"
             ].get<float>();
-
     }
 
 
@@ -946,7 +931,6 @@ void ZoomModule::loadConfig(
             j[
                 "m_lowSens"
             ].get<bool>();
-
     }
 
 
@@ -960,7 +944,6 @@ void ZoomModule::loadConfig(
             j[
                 "m_lowSensStrength"
             ].get<float>();
-
     }
 
 
@@ -974,7 +957,6 @@ void ZoomModule::loadConfig(
             j[
                 "m_hideHand"
             ].get<bool>();
-
     }
 }
 
