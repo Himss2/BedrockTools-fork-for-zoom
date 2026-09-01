@@ -2,6 +2,8 @@
 
 #include "../Module.hpp"
 
+#include <cstdint>
+
 #include <pl/Input.hpp>
 
 
@@ -9,24 +11,34 @@ class ZoomModule : public Module {
 public:
 
     // =========================================================================
-    // ZOOM SETTINGS
+    // ZOOM
     // =========================================================================
 
-    float m_defaultZoomFov  = 20.58f;
-    float m_targetZoomFov   = 20.58f;
+    float m_defaultZoomFov =
+        20.58f;
 
-    float m_currentFov      = 90.0f;
-    float m_baseFov         = 90.0f;
+    float m_targetZoomFov =
+        20.58f;
 
-    float m_animSpeed       = 0.25f;
+    float m_currentFov =
+        90.0f;
+
+    float m_baseFov =
+        90.0f;
+
+    float m_animSpeed =
+        0.25f;
 
 
     // =========================================================================
-    // LOW SENSITIVITY
+    // SENSITIVITY
     // =========================================================================
 
-    bool  m_lowSens         = true;
-    float m_lowSensStrength = 0.9f;
+    bool m_lowSens =
+        true;
+
+    float m_lowSensStrength =
+        0.9f;
 
 
     // =========================================================================
@@ -38,7 +50,7 @@ public:
 
 
     // =========================================================================
-    // ZOOM RUNTIME STATE
+    // ZOOM STATE
     // =========================================================================
 
     bool m_animationFinished =
@@ -46,7 +58,6 @@ public:
 
     bool m_isFirstTime =
         true;
-
 
     bool m_keyZooming =
         false;
@@ -56,63 +67,66 @@ public:
 
 
     // =========================================================================
-    // TOUCH / SWIPE TRACKING
+    // RAW TOUCH TRACKING
     // =========================================================================
 
     //
-    // Pointer yang sekarang menjadi milik tombol Zoom.
-    //
-    // Nilai -1 berarti tidak ada pointer yang sedang ditrack.
+    // Pointer yang benar-benar dimiliki tombol Zoom.
     //
 
-    int m_trackedPointerId =
+    int32_t m_zoomPointerId =
         -1;
 
 
     //
-    // Y dari event MOVE sebelumnya.
+    // Posisi Y terakhir dari GameActivityMotionEvent.
     //
 
-    float m_lastTouchY =
+    float m_lastRawY =
         0.0f;
 
-
-    // =========================================================================
-    // PENDING BUTTON DOWN
-    // =========================================================================
-
-    //
-    // PreloaderInput menerima ACTION_DOWN SEBELUM ButtonBuilder.
-    //
-    // Karena callback ButtonBuilder::Down tidak memberikan pointerId,
-    // kita cache pointer dari TouchEvent terlebih dahulu.
-    //
-    // Setelah ButtonBuilder mengirim event Down,
-    // pointer ini dijadikan m_trackedPointerId.
-    //
-
-    int m_pendingPointerId =
-        -1;
-
-    float m_pendingTouchY =
-        0.0f;
-
-    bool m_pendingTouchValid =
+    bool m_hasLastRawY =
         false;
 
 
     // =========================================================================
-    // CONSTRUCTOR / DESTRUCTOR
+    // CANDIDATE POINTER
+    // =========================================================================
+
+    //
+    // TouchEvent DOWN tetap digunakan, tetapi HANYA untuk mengetahui pointerId.
+    //
+    // MOVE tidak lagi menggunakan pl::input::TouchEvent.
+    //
+
+    int32_t m_candidatePointerId =
+        -1;
+
+    float m_candidateY =
+        0.0f;
+
+    uint64_t m_candidateTimeMs =
+        0;
+
+    bool m_candidateValid =
+        false;
+
+
+    //
+    // Digunakan jika ButtonBuilder::Down tiba sebelum TouchEvent DOWN.
+    //
+
+    bool m_waitingForZoomPointer =
+        false;
+
+
+    // =========================================================================
+    // LIFECYCLE
     // =========================================================================
 
     ZoomModule();
 
     ~ZoomModule() override;
-
-
-    // =========================================================================
-    // MODULE LIFECYCLE
-    // =========================================================================
 
     void onInit() override;
 
@@ -139,7 +153,6 @@ public:
         const nlohmann::json& j
     ) override;
 
-
     void saveConfig(
         nlohmann::json& j
     ) override;
@@ -153,7 +166,7 @@ public:
 
 
     // =========================================================================
-    // TOUCH
+    // TOUCH CANDIDATE
     // =========================================================================
 
     bool onTouchEvent(
@@ -162,7 +175,32 @@ public:
 
 
     // =========================================================================
-    // SWIPE
+    // BUTTON POINTER
+    // =========================================================================
+
+    void beginButtonZoom();
+
+    void endButtonZoom();
+
+    void captureZoomPointer(
+        int32_t pointerId,
+        float initialY
+    );
+
+    void resetZoomPointer();
+
+
+    // =========================================================================
+    // RAW MOTION
+    // =========================================================================
+
+    void processRawMotion(
+        const void* motionEvent
+    );
+
+
+    // =========================================================================
+    // DRAG
     // =========================================================================
 
     void updateDrag(
@@ -181,10 +219,6 @@ public:
 
 private:
 
-    // =========================================================================
-    // HOOK STATE
-    // =========================================================================
-
     bool m_fovHooked =
         false;
 
@@ -195,6 +229,9 @@ private:
         false;
 
     bool m_touchHooked =
+        false;
+
+    bool m_rawMotionHooked =
         false;
 
     bool m_buttonRegistered =
